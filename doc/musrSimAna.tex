@@ -1,0 +1,861 @@
+\documentclass[twoside]{dis04}
+\usepackage{epsfig} 
+\def\runauthor{PSI}
+\def\shorttitle{musrSimAna}
+\begin{document}
+
+\newcommand{\musr}{\ensuremath{\mu}SR}
+\newcommand{\musrSim}{\emph{musrSim}}
+\newcommand{\musrSimAna}{\emph{musrSimAna}}
+\title{Manual of musrSimAna}
+\author{Kamil Sedl\'ak$^1$}
+\author{James S. Lord$^2$}
+
+\address{{$^1$ Laboratory for Muon Spin Spectroscopy, Paul Scherrer Institut, CH-5232 Villigen PSI, Switzerland}}
+\address{{$^2$ ISIS Facility, Rutherford Appleton Laboratory, Chilton, Oxon OX11 0QX, U.K.}}
+
+\maketitle
+
+\abstracts{
+``musrSimAna'' is an analysis program, which helps the user to analyse and interpret the output of the
+``musrSim'' simulation.}
+
+%========================================================================================================
+\section{Introduction}
+\label{introduction}
+The purpose of the \musrSimAna\ program is to analyse the Root tree, the output 
+of the \musrSim\ program.
+In general, the event-by-event information stored in the Root tree can be easily used only for
+a very quick and rough tests -- e.g.\ to see, where the muons stop and decay irrespective
+of whether they were triggered in the M-counter or not, or to have an idea what energy
+spectrum was deposited in a given counter.  Typically, however, one is more interested
+to study \musr\ signal amplitude, time-independent background, or where the muons decay
+only for the ``stopped'' muons (e.g.\ muons triggered by M-counter and not detected
+by a veto counter), or only for triggered muons which actually stopped in a cryostat
+rather than in a sample.  Such a study requires some kind of analysis program, which
+loops over all events stored in the Root tree (output of \musrSim), and implements the
+logic of the required \musr\ experiment.
+
+One way to do such analysis is to start from a Root command {\tt MakeClass(``MyAnalysis'')},
+which creates some sort of skeleton c++ class for the given Root tree.  This allows the user
+to make his/her own and very specific analysis program tailored to his/her needs.  On the other
+hand, it requires special program for each detector set-up.
+
+A second possibility is to use \musrSimAna, which is intended to be a general analysis 
+program for \musr\ instruments. 
+\musrSimAna\ was originally written for continuous muon beam facilities.
+Some extensions have been added for pulsed muon beams, see section \ref{sect_pulsed}.
+
+As in the case of \musrSim, the user of \musrSimAna\ specifies all parameters
+required by the analysis in an input text file (steering file).  The initial structure
+of the steering file was taken over from the TDC setup files used by real \musr\ instruments 
+at PSI~\cite{acquisitionProkscha,TDCsetup}.  This setup file defines the ``logic'' of a given experiment,
+namely the coincidences and anti-coincidences of different counters and veto detectors, as well as some
+timing parameters.
+The setup file for the case of simulation had to be extended by the definitions of
+histograms, cuts, fitting, etc.  The description of the setup file will be
+presented in chapter~\ref{howToAnalyse}-\ref{description}, the chapter~\ref{sec:GPD}
+illustrates the whole concept of \musrSimAna\ on the example of an existing \musr\ instrument.
+
+
+
+\section{The main components of the \musrSimAna\ setup file}
+\label{howToAnalyse}
+The parameters for the analysis are stored in the setup file ``{\tt RUNxxx.v1190}'', whose name 
+typically consists of the run number ({\tt RUN}), 
+some further identifier ({\tt xxx}), and ends with ``{\tt .v1190}''. 
+One of the following commands can be used to execute \musrSimAna: \\[1em]
+{\tt
+\$> musrSimAna RUN RUNxxx \\
+\$> musrSimAna RUN RUNxxx nographic > data/RUN.RUNxxx.out
+}\\[1em]
+where the first {\tt RUN} stands for the run number (more precisely, it specifies 
+the \musrSim\ output, which is expected to be stored as ``{\tt data/musr\_RUN.root}'')
+and {\tt RUNxxx} specifies the \musrSimAna\ setup file without the ending, which is
+expected to be stored in the current directory.  The output file of \musrSimAna,
+containing the result histograms, will be stored as ``{\tt data/his\_RUN\_RUNxxx.v1190.root}''.
+
+The syntax of the setup file in \musrSimAna\ is based on the experimental one, 
+defined in~\cite{TDCsetup}.
+At the beginning of this file, some timing parameters are defined:\\[1em]
+\begin{tabular}{ll}
+{\tt RESOLUTION=100 } & \emph{\ldots one TDC bin corresponds to 100\,ps} \\[0.7em]
+{\tt MCOINCIDENCEW=50 } & \emph{\ldots time interval (in TDC bins) to find coincidences with M-counter} \\
+{\tt PCOINCIDENCEW=50 } & \emph{\ldots time interval (in TDC bins) to find coincidences with P-counter} \\
+{\tt VCOINCIDENCEW=100 } & \emph{\ldots time interval (in TDC bins) to find anti-coincidences with M-counter} \\[0.7em]
+{\tt MUONRATEFACTOR=0.089 } & \emph{\ldots will be described in section~\ref{sec:eventMixing}} \\[0.7em]
+{\tt DATAWINDOWMIN=-2.0 } & \emph{\ldots data interval (in $\mu$s) in which positrons are detected} \\
+{\tt DATAWINDOWMAX=10.0 } &  \\[0.7em]
+{\tt PILEUPWINDOWMIN=-10.0 } & \emph{\ldots the pileup interval (in $\mu$s)  for muons} \\
+{\tt PILEUPWINDOWMAX=10.0 } & \\[1em]
+\end{tabular}
+%
+A good event has exactly one hit in the M-counter within the pile-up window, and exactly
+one hit in the positron counters within the data window.  Both windows are defined relative to $t_0$,
+which is the time of the currently analysed M-counter hit.
+
+The coincidence and anti-coincidence logic between the different counters
+(the detector logic) is also specified in the setup file.
+An example may look like this:\\
+\begin{verbatim}
+102; "M up";         M; 0.4;  2005; -401;
+  1; "B1";           P; 0.4;  2005;   21 -401; B1; 1485; 1515; 50995;
+  2; "B2";           P; 0.4;  2005;   22 -401; B2; 1485; 1515; 50995;
+ 11; "F1";           P; 0.4;  2005; -401 -21 -22; F11; 1485; 1515; 50995;
+ 12; "F2";           P; 0.4;  2005; -401 -21 -22; F12; 1485; 1515; 50995;
+ 13; "F3";           P; 0.4;  2005; -401 -21 -22; F13; 1485; 1515; 50995;
+ 21; "Coinc B1"      K; 0.4;  2005;
+ 22; "Coinc B2"      K; 0.4;  2005;
+401; "Active Veto"   V; 0.1;  2005;
+\end{verbatim}
+\mbox{} \\
+%
+In each row, the first number stands for the detector ID (defined in the steering file
+of the \musrSim), the second variable is the name of the counter,
+the third variable identifies the type of the counter (M = muon, P = positron,
+K = coincidence and V = veto counters, respectively), the forth variable is the threshold in MeV applied
+to the energy deposited in the counter, the fifth variable is a time delay (in units
+of bin-width) applied to the given counter, the sixth set of parameters defines
+which other detectors have to be in coincidence (positive ID) or anti-coincidence
+(negative ID) with the given counter, and in the case of positron counters, the
+last four parameters define a special histogram for the given counter. (Note
+that this histogram is used for a compatibility with the experimental steering file, however
+there is a different and more powerful way of how to define histograms, which is 
+defined later). The only difference with respect to the experimental steering
+file is the presence of threshold definition in the fourth column.
+In the example above, the M-counter is the volume which has ID 102 in the simulation,
+and a valid hit has to have energy in the counter above 0.4\,MeV, and no signal
+above 0.1\,MeV in the ``Active Veto'' (ID=401) within a time interval defined by 
+{\tt VCOINCIDENCEW}.  The detailed description of *.v1190 steering files can be found 
+in chapter~\ref{description} and in~\cite{TDCsetup}.
+
+
+
+The main output of the simulation is generated in the form of histograms.
+The histograms are defined in the steering file. For example, the following
+line defines 1-dimensional histogram of the $z$-position of where the muons stop and decay:\\[1em]
+{\tt
+musrTH1D hMuDecayPosZ "Where the muons stop;z[mm];N" 100 -5. 5. muDecayPosZ
+}\\[1em]
+This histogram has 100 bins, spans from -5\,mm to 5\,mm, and the variable filled
+in the histogram is {\tt muDecayPosZ}.
+In fact, this line does not create one histogram, but an array of histograms -- one
+histogram for each ``condition''.  An example of five conditions reads:\\[1em]
+{\tt
+condition 1 oncePerEvent \\
+condition 2 muonDecayedInSample\_gen \\
+condition 4 muonTriggered\_det \\
+condition 6 goodEvent\_det \\
+condition 9 pileupEvent 
+}\\[1em]
+where integer numbers (1,2,4,6 and 9) denote the condition number, and the string at the end
+describes the condition -- e.g.\ ``{\tt muonDecayedInSample\_gen}'' specifies that muon
+has stopped and decayed in the sample, and ``{\tt muonTriggered\_det}'' specifies that
+there had to be a good muon candidate triggered in the M-counter.  
+The ending ``{\tt \_gen}'' indicates that the variable used in the condition 
+was ``generated'', i.e.\ it is known in the simulation, but can not be directly 
+measured experimentally.
+On the other hand the ending ``{\tt \_det}'' specifies that the given condition
+is based on measurable variables, as e.g.\ energy deposits in a counter.
+
+There can be up to
+30 conditions requested, and for each of them a separate histogram will be filled.
+In the output file of \musrSimAna, the histograms corresponding to the previous 
+set of conditions would be saved as
+{\tt hMuDecayPosZ\_1, hMuDecayPosZ\_2, hMuDecayPosZ\_4, hMuDecayPosZ\_6, hMuDecayPosZ\_9}.
+The {\tt hMuDecayPosZ\_1} shows where the muons stop irrespective whether they were
+detected or not. The {\tt hMuDecayPosZ\_6} contains ``good'' muons, i.e.\ muons that would
+be saved in the final histograms in the experiment.  The  {\tt hMuDecayPosZ\_9} shows
+the muons, which contribute to the time-independent background.  Note that there are always
+two muons, $\mu_1$ and $\mu_2$, contributing to the time-independent background, and {\tt hMuDecayPosZ\_9}
+shows the one ($\mu_1$) that started the M-counter. More to this topic is presented
+in chapter~\ref{sec:eventMixing}. Here we just mention that in order 
+to see the $z$-coordinate of the second muon ($\mu_2$),
+which was not triggered by the M-counter but whose decay positron hit the positron counter,
+the histogram {\tt hpileup\_muDecayPosZ\_9} must be used:\\[1em]
+{\tt
+musrTH1D hpileup\_muDecayPosZ "Pileup muons;z[mm];N" 100 -5.0 5. pileup\_muDecayPosZ
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Event mixing -- an unavoidable complication}
+\label{sec:eventMixing}
+The output of \musrSim\ is stored in a Root tree named ``{\tt t1}''.  One event corresponds
+to one simulated muon, and it is saved as one row of the tree.  The only information that
+relates one event (muon) to any other one is the variable {\tt timeToNextEvent}, 
+which is a randomly generated time difference between two subsequent events.
+
+The \musrSimAna\ allows one to study the ``time-independent background'', which is
+due to mixing of two different events. A simple example of the event mixing affecting 
+the \musr\ measurement is the following:  the first muon, $\mu_1$, hits the M-counter,
+and subsequently stops and decays in the sample, however the decay positron escapes
+undetected -- most likely because of the limited angular acceptance of positron counters.
+The second muon, $\mu_2$,  arrives around the same time, misses the M-counter, 
+and stops and decays in a collimator wall or elsewhere. 
+Its decay positron hits a positron counter.  Thus there are good-looking muon and positron
+hits,  which however arise from two uncorrelated muons. 
+This fake (background) event is experimentally treated as a good event,
+and contributes to the time-independent background.
+
+Events can be mixed in \musrSimAna, allowing us to study sources of
+the time-independent background.
+%\emph{MusrSimAna} loops over the events and checks whether the conditions defining 
+%the detector logic in the steering file have been fulfilled.  However, to take event
+%mixing properly into account, the conditions have to be veryfied on several subsequent
+%events.  Therefore, at the beginning of the analysis of
+Before analysing  a given event, arrays of hits are filled
+for all counters (M, positron, veto, coincidence counters), which store the hits occurring in the
+future up to the time equal to $ 3\, \cdot $ pileup window or $ 3\, \cdot $ data window,
+whatever is larger\footnote{The data and pile-up windows defined by parameters 
+{\tt DATAWINDOWMIN, DATAWINDOWMAX, PILEUPWINDOWMIN} and {\tt PILEUPWINDOWMAX} 
+are applied later on in the analysis.}. 
+There is one such array for every counter.  After this initial filling,
+there might be several hits in every array, originating from one or more events.
+
+
+The fraction of the time-independent background to good events depends on the incoming muon rate
+measured by the trigger, possibly in the anti-coincidence with a backward veto detector, if
+used in the experiment.  
+Typically, the experimentalists set the incoming muon rate (rate of \emph{stopped muons})
+to $\sim 30\,000\,\mu/s$.  The same should be done in the simulation.
+However, the rate of stopped muons is known only after the analysis is done,
+because, for example, many simulated muons stop and decay in collimators or elsewhere 
+in the beam-pipe without producing any signal in the M-counter.
+Therefore the simulation is normally started with an initial rate of generated muons
+of $30\,000\,\mu/s$, which in practise can correspond to much lower rate of \emph{stopped muons}.
+The rate of stopped muons is calculated at the end of the \musrSimAna\ execution, and
+it is printed out in the \musrSimAna\ output.  The user can use this information and rescale the
+initial muon rate by changing parameter {\tt MUONRATEFACTOR} in the {\tt *.v1190} setup file. 
+This is done without the necessity to re-run the CPU consuming 
+simulation -- only the \musrSimAna\ has to be repeated.  The complete simulation and analysis
+chain therefore usually consists of three steps:
+%
+\begin{enumerate}
+  \item \musrSim\  (takes typically 10 hours).
+  \item \musrSimAna\  with {\tt MUONRATEFACTOR=1.0} (takes typically 10 minutes).
+  \item \musrSimAna\  with {\tt MUONRATEFACTOR} determined in step 2.
+\end{enumerate}
+%
+The {\tt MUONRATEFACTOR} specifies a multiplicative factor applied to
+the variable {\tt timeToNextEvent} 
+(the randomly generated time difference between two subsequent events).
+
+{\bf IMPORTANT NOTE:} In order to get the pile-up effects correctly analysed by \musrSimAna, 
+it is probably necessary to run the \musrSim\ with no event reweighting (i.e.\
+the command ``{\tt /musr/command logicalVolumeToBeReweighted \ldots}'' must {\bf not} be used).
+All events should/have to be (?) saved in the Root tree
+(i.e.\ the command ``{\tt /musr/command storeOnlyEventsWithHits false}'' must be used).
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Detailed list of steering file parameters}
+\label{description}
+\begin{description}
+%   \item{\bf INSTRUMENT=\emph{string}} \\ 
+%         ignored
+%   \item{\bf DESCRIPTION=\emph{string}} \\ 
+%        ignored
+%   \item{\bf TYPE=\emph{string}} \\ 
+%         ignored
+   \item{\bf RESOLUTION=\emph{value}} \\ 
+         width of the TDC bin in picoseconds.
+   \item{\bf MDELAY=\emph{value}} \\ 
+         currently not used (probably not needed in the case of simulation).
+   \item{\bf PDELAY=\emph{value}} \\ 
+         currently not used (probably not needed in the case of simulation).
+   \item{\bf MCOINCIDENCEW=\emph{value}} \\ 
+         time window for the coincidences of the coincidence detectors (``K'')
+         with the M-counter. The \emph{value} is given in TDC bins (see {\tt RESOLUTION} above).
+   \item{\bf PCOINCIDENCEW=\emph{value}} \\ 
+         time window for the coincidences of the coincidence detectors (``K'')
+         with positron counters. The \emph{value} is given in TDC bins.
+   \item{\bf VCOINCIDENCEW=\emph{value}} \\ 
+         time window for the coincidences of the anti-coincidence detectors (``V'')
+         with any other counter. The \emph{value} is given in TDC bins.
+   \item{\bf MUONRATEFACTOR=\emph{value}} \\ 
+         a multiplicative factor which is used to rescale time differences between subsequent muons.
+	 Setting \emph{value} larger than 1 artificially prolongs the time difference between
+	 two subsequently generated muons, and therefore decreases the incoming muon rate 
+         (number of muons per second).  This parameter should be changed in order to set the
+	 incoming muon rate to a given required value, typically to 30\,000\,$\mu/$s.\\
+	For Pulsed beams this adjusts the mean number of muons per frame and can again be used to match the experimental count rate.\\
+	 See also variable ``INFINITELYLOWMUONRATE''.
+   \item{\bf INFINITELYLOWMUONRATE} \\ 
+         If INFINITELYLOWMUONRATE is specified, each event is treated independently of any other
+         event.  This corresponds to a situation of infinitely low rate of incoming muons, and
+         no pileup can be observed.  The variable ``MUONRATEFACTOR'' becomes irrelevant when
+	 INFINITELYLOWMUONRATE is specified.
+\item{\bf FRAMEINTERVAL=\emph{value}} \\
+	For pulsed data analysis, the interval between muon pulses in ms. Affects the number of muons/frame (as does MUONRATEFACTOR) and the calculated run duration and count rate.
+\item{\bf PARTIALFRAMEATEND} \\
+	For pulsed data analysis. If the events in the input file do not fill an exact number of frames, this requests that the partially filled frame left over at the end will be processed too and included in the results.
+	This will happen anyway if it would be the only frame (low statistics input file or very high requested flux). Normally such a frame would be discarded as it would have the wrong pile-up fraction.
+\item{\bf DEADTIME=\emph{value}} \\
+	Set the ``dead time'' recovery time in ns for pulsed data analysis, for all the detectors defined after this point in the file.
+   \item{\bf MUONPULSEWIDTHFACTOR=\emph{value}} \\ 
+	Scale the random start times (and therefore the muon pulse width) in the input file by this value.
+\item{\bf COMMONTHRESHOLD=\emph{value}} \\
+	A short-cut to adjust the threshold settings for all detectors (after this point in the file). Overrides the individual values.
+   \item{\bf DATAWINDOWMIN=\emph{value}} \\ 
+         Beginning of the data interval for the positron counters in $\mu$s.
+   \item{\bf DATAWINDOWMAX=\emph{value}} \\ 
+         End of the data interval for the positron counters in $\mu$s.
+   \item{\bf PILEUPWINDOWMIN=\emph{value}} \\ 
+         Beginning of the pileup interval for the M-counter in $\mu$s.
+   \item{\bf PILEUPWINDOWMAX=\emph{value}} \\ 
+         End of the pileup interval for the M-counter in $\mu$s.
+   \item{\bf PROMPTPEAKMIN=\emph{value}} \\ 
+         Beginning of the prompt-peak interval in $\mu$s.  This variable is used only for the condition
+	 ``{\tt promptPeak}'', ``{\tt promptPeakF}'', etc.\ , and normally does not need to be specified.  It becomes useful if
+	 the user wants to investigate, where the prompt-peak originates from (where do the muons,
+	 which give rise to the prompt peak, stop).  The default value is -0.01\,$\mu$s.
+   \item{\bf PROMPTPEAKMAX=\emph{value}} \\ 
+         End of the prompt-peak interval in $\mu$s, the default value is 0.01\,$\mu$s. (See comments 
+	 for {\tt PROMPTPEAKMIN}.)
+   \item{\bf MUSRMODE=\emph{string}} \\ 
+         Defines the mode of \musr\ experiment -- presently only ``D'', corresponding to
+	 the time differential mode, and ``P'', for pulsed mode, are implemented.
+   \item{\bf REWINDTIMEBINS=\emph{value}} \\
+         A technical parameter specifying when a roll-over of all hits has to be done.
+	 It is specified in TDC bins, and normally there should be no need to change this parameter.
+   \item{\bf DEBUGEVENT \emph{eventID} \emph{debugLevel}}\\
+         Prints out debug information about the event with the ID \emph{``eventID''}.  
+	 The higher the \emph{debugLevel}, the more details are printed.
+	 (Both \emph{eventID} and \emph{debugLevel} are integers).
+   \item{\bf CLONECHANNEL \emph{ID1} \emph{ID2}}\\
+         Clones the hits detected in counter \emph{ID1} into a new counter \emph{ID2}.
+	 A different (even a lower) threshold can be applied to the cloned counter.
+	 This way the same counter can be used as two independent counters -- e.g.\ once as a veto
+	 detector for the M-counter, and simultaneously as a coincidence detector for
+	 a P-counter.  In both cases the energy threshold and time windows are defined independently.
+   \item{\bf WRITE\_OUT\_DUMP\_FILE \emph{fileNameString} \emph{clockChannel} \emph{randomJitter}}\\
+         If present, this command will create two output files, the so-called ``dump files'':\\
+	 {\tt data/TDC\_V1190\_200\_dump\_\emph{fileNameString}.bin} -- file that can be used
+	 as an input to the PSI analysis front-end of a real experiment.\\
+	 {\tt data/TDC\_V1190\_200\_dump\_\emph{fileNameString}.txt} -- file that contains the same
+	 information (hits) as the previous file, however in a human-readable form.  The first number in the file
+	 stands for the channel number, the second number stands for the time bin in the TDC bin units.\\
+	 \emph{clockChannel} ... the channel of the clock signal (typically 15).\\
+	 \emph{randomJitter} ... this value is in TDC bins, typically 0 or 8000 (?).  If \emph{randomJitter} is smaller then
+	 1, then the hits in the dump files will be sorted according to time.  If it is larger than 0, then
+	 subsequent hits can be unordered in time, but the time difference never exceeds the value of \emph{randomJitter}.
+	 This is just a technical thing serving to test the analysis software -- it should not
+	 have any effect on the analysis results.
+   \item{\bf musrTH1D \emph{histoName} \emph{histoTitle} \emph{nBins} \emph{min} \emph{max} \emph{variable} 
+        [{\tt rotreference} $\nu_{\rm RRF}$ $\phi_{\rm RRF}$] $|$ [correctexpdecay]} \\
+         Defines a histogram (or more precisely an array of histograms, where the number of histograms
+	 in the array is given by the number of conditions, see section~\ref{howToAnalyse}).
+	 The name of the histogram is defined by \emph{histoName} + the number of the condition.
+	 The string variable \emph{histoTitle} specifies the title of the histogram, 
+	 \emph{nBins}, \emph{min} and \emph{max} stand for the number of bins and minimum and maximum
+	 of the $x$-axis of the histogram.  \\
+	 The optional keyword ``{\tt rotreference}'' signals that the given histogram will be filled in
+	 rotating reference frame (RRF) with the frequency of $\nu_{\rm RRF}$ and a phase shift of $\phi_{\rm RRF}$.
+	 \\
+	 The optional keyword ``{\tt correctexpdecay}'' signals that the given histogram will be corrected
+         for the muon exponential decay (i.e. multiplied by a factor $\exp(t/2.19703)$.  It is meaningful
+	 only for time variables.
+	 \\
+	 The \emph{variable} stands for the variable that will be
+	 filled into the histogram.  The \emph{variable} can be any variable from the output Root tree
+	 of musrSim (see ``Manual of musrSim'') (except for the array variables like 
+	 {\tt det\_*[], save*[], odet\_*[]}). In addition, it can be also one of the following:
+	 \begin{description}
+	   \item[muDecayPosR]         \ldots $\sqrt{ {\rm muDecayPosX}^2 + {\rm muDecayPosY}^2}$.
+	   \item[wght]                \ldots weight of the event.
+	   \item[det\_m0edep]         \ldots energy deposited in the M-counter that gives the muon signal.
+	   \item[det\_posEdep]        \ldots energy deposited in the P-counter that gives the positron signal.
+	   \item[muIniPosR]           \ldots $\sqrt{ {\rm muIniPosX}^2 + {\rm muIniPosY}^2}$.
+	   \item[muIniMomTrans]       \ldots $\sqrt{ {\rm muIniMomX}^2 + {\rm muIniMomY}^2}$.
+	   \item[muTargetPol\_Theta]   \ldots theta angle of the muon spin when muon enters target (-180,180 deg).
+	   \item[muTargetPol\_Theta360]\ldots theta angle of the muon spin when muon enters target (0,360 deg).
+	   \item[muTargetPol\_Phi]    \ldots phi angle of the muon spin when muon enters target (-180,180 deg).
+	   \item[muTargetPol\_Phi360] \ldots phi angle of the muon spin when muon enters target (0,360 deg).
+	   \item[pos\_Momentum]       \ldots magnitude of the momentum of the decay positron (``generated'', not measurable variable).
+	   \item[pos\_Trans\_Momentum] \ldots transverse momentum of the decay positron.
+	   \item[pos\_Radius]         \ldots positron radius calculated from the decay positron momentum and magnetic 
+                                             field at the point of decay.
+	   \item[pos\_Theta]          \ldots polar angle of the decay positron.
+	   \item[pos\_Phi]            \ldots azimuth angle of the decay positron.
+	   \item[det\_time10]         \ldots time difference between the positron and muon counters 
+	                                     (measured by the respective counters).
+	   \item[gen\_time10]         \ldots the time difference between the muon decay and the first muon hit 
+	                                     in the M-counter (i.e.\ {\tt muDecayTime - muM0Time}).
+	   \item[det\_time10\_MINUS\_gen\_time10] \ldots {\tt det\_time10 - gen\_time10} in picoseconds.
+	   \item[det\_time20]          \ldots very similar to {\tt det\_time10}, however taking into
+	                               account ``counter phase shift'' defined by {\tt counterPhaseShifts}
+				       variable.  This gives the user a possibility to sum up backward and
+				       forward histograms into one histogram (this of course make sense
+				       only in the simulation, where there is ``no physics'' happening 
+				       in the sample, just the muon spin rotation).
+	   \item[pileup\_eventID]      \ldots eventID of the $\mu_2$, where $\mu_2$ stands for the muon, 
+	                              which did not give signal in the M-counter, but whose
+				      decay positron gave signal in the positron counter around the time 
+				      when a different muon ($\mu_1$) triggered the M-counter.
+	   \item[pileup\_muDecayDetID] \ldots detector ID, in which $\mu_2$ stopped and decayed. 
+	   \item[pileup\_muDecayPosZ]  \ldots $z$-coordinate of where the $\mu_2$ stopped and decayed.
+	   \item[pileup\_muDecayPosR]  \ldots radius of where the $\mu_2$ stopped and decayed.
+	\item[BFieldAtDecay\_Bx]  \ldots The field at the location the muon decayed (X component).
+	\item[BFieldAtDecay\_By]  \ldots The field at the location the muon decayed (Y).
+	\item[BFieldAtDecay\_Bz]  \ldots The field at the location the muon decayed (Z).
+	\item[fieldNomVal0] \ldots The nominal magnitude of the first field map used. Useful if the field is scanned in \musrSim \ and some background muons stop away from the central uniform field region.
+	\item[fieldNomVal1] \ldots The nominal magnitude of the second mapped field.
+	\item[pos\_detID] \ldots The detector number of the positron detector recording this signal.
+	\item[pos\_detID\_doublehit] \ldots For pulsed mode, if this is not the first positron signal, the detector number of that first signal.
+	\item[multiHitInterval] \ldots (Pulsed) If a double count, the time interval (in $\mu$s) between the first positron signal and this one.
+	 \end{description}
+	 Variables are usually set to -1000 if they can not be calculated (e.g.\ {\tt det\_posEdep} = -1000 
+	 if there was no hit in any positron counter).
+   \item{\bf musrTH2D \emph{histoName} \emph{histoTitle} \emph{nBins} \emph{min} \emph{max} \emph{nBins2} \emph{min2} \emph{max2} \emph{variable}} \\
+     Similar to \emph{musrTH1D}, but for a 2-D histogram.
+   \item{\bf humanDecayHistograms \emph{hist\_decay\_detID} \emph{hist\_decay\_detID\_pileup}  \emph{id$_1$} \emph{name$_1$} \ldots \emph{id$_n$} \emph{name$_n$} } \\
+     This is a special kind of histogram, which converts two histograms 
+     (\emph{hist\_decay\_detID} \emph{hist\_decay\_detID\_pileup})
+     into a human-friendly histograms, where detector ID on the $x$-axis is converted into a string label.
+     The \emph{id$_i$} is the detector id, and the \emph{name$_i$} is the corresponding label name.
+     If \emph{name$_i$ = name$_j$}, the corresponding bins of the original histograms will 
+     be summed up together into the same bin.
+     The \emph{hist\_decay\_detID} and \emph{hist\_decay\_detID\_pileup} have to be defined before
+     (by the command {\tt musrTH1D}).
+   \item{\bf condition \emph{conditionID} \emph{conditionName}} \\
+     Definition of a condition, which is then used when filling histograms.  The \emph{conditionID} 
+     specifies the number of the condition, and must be between 0 and 30 (0 and 30 are also possible).  
+     The \emph{conditionName} is one of the following:
+     \begin{description}
+        \item[alwaysTrue]              \ldots  true for every hit in the m-counter (there can be more than one M-counter hit per event).
+	\item[oncePerEvent]            \ldots  true once for every event (the first hit in M-counter, if any, is considered). For Pulsed mode, this is the first hit in the lowest numbered positron detector, if any.
+	\item[muonDecayedInSample\_gen] \ldots  true if muon stopped and decayed in the sample (one count for each positron hit, if double counting in pulsed mode).
+	\item[muonDecayedInSampleOnce\_gen] \ldots  true if muon stopped and decayed in the sample (true only once mer muon, use for sample/background fractions).
+	\item[muonTriggered\_gen]       \ldots  true if muon passed through the M-counter (irrespective of the deposited energy) 
+	                                       -- not a measurable variable.
+	\item[muonTriggered\_det]       \ldots  true if a good muon candidate was found in the M-counter (using coincidences, vetoes, ...).
+	                                       Double hits within the pileup window are excluded.
+	\item[positronHit\_det]         \ldots  true if a good positron candidate was found in the positron counter.  
+	                                       Double hits within the data window are excluded.
+	\item[goodEvent\_det]           \ldots  true if {\tt muonTriggered\_det} and {\tt positronHit\_det}. In Pulsed mode, any positron event over threshold and not killed by pileup.
+	\item[goodEvent\_gen]           \ldots  true if muon passed through the M-counter, and the muon stopped anywhere 
+	                                       (i.e.\ did not leave the World volume of the simulation).  No requirement
+	                                       on the positron is implied, i.e.\ the positron may or may not be detected.
+					       Not a measurable variable. For pulsed mode, the first (or only) positron event over threshold (even if piled up).
+	\item[goodEvent\_det\_AND\_goodEvent\_gen] 
+	\item[pileupEventCandidate]    \ldots  M-counter hit and positron counter hit both come from two different events.
+	\item[pileupEvent]             \ldots  {\tt pileupEventCandidate} and {\tt goodEvent\_det}. Or for pulsed mode, an event lost due to ``dead time''.
+	\item[goodEvent\_det\_AND\_muonDecayedInSample\_gen] 
+	\item[goodEvent\_F\_det]         \ldots  {\tt goodEvent\_det}, where the positron was detected in the forward detectors
+	                                       defined by the command {\tt counterGrouping}.
+	\item[goodEvent\_B\_det]         \ldots  like {\tt goodEvent\_F\_det} but for backward positron counters.
+	\item[goodEvent\_U\_det]         \ldots  like {\tt goodEvent\_F\_det} but for upper    positron counters.
+	\item[goodEvent\_D\_det]         \ldots  like {\tt goodEvent\_F\_det} but for lower    positron counters.
+	\item[goodEvent\_L\_det]         \ldots  like {\tt goodEvent\_F\_det} but for left     positron counters.
+	\item[goodEvent\_R\_det]         \ldots  like {\tt goodEvent\_F\_det} but for right    positron counters.
+	\item[goodEvent\_F\_det\_AND\_muonDecayedInSample\_gen] \ldots the count in a Forward counter came from a muon in the sample. Equivalent conditions for the other groups.
+	\item[goodEvent\_F\_det\_AND\_pileupEvent] \ldots {\tt goodEvent\_F\_det} and {\tt pileupEvent}. For pulsed mode, an event lost from the F counters.
+	\item[goodEvent\_B\_det\_AND\_pileupEvent] \ldots {\tt goodEvent\_B\_det} and {\tt pileupEvent}.
+	\item[goodEvent\_U\_det\_AND\_pileupEvent] \ldots {\tt goodEvent\_U\_det} and {\tt pileupEvent}.
+	\item[goodEvent\_D\_det\_AND\_pileupEvent] \ldots {\tt goodEvent\_D\_det} and {\tt pileupEvent}.
+	\item[goodEvent\_L\_det\_AND\_pileupEvent] \ldots {\tt goodEvent\_L\_det} and {\tt pileupEvent}.
+	\item[goodEvent\_R\_det\_AND\_pileupEvent] \ldots {\tt goodEvent\_R\_det} and {\tt pileupEvent}.
+	\item[promptPeak]                 \ldots  {\tt goodEvent\_det}, and {\tt PROMPTPEAKMIN < det\_time10 < PROMPTPEAKMAX}.
+	\item[promptPeakF]                \ldots  like {\tt goodEvent\_F\_det} and {\tt promptPeak}.
+	\item[promptPeakB]                \ldots  like {\tt goodEvent\_B\_det} and {\tt promptPeak}.
+	\item[promptPeakU]                \ldots  like {\tt goodEvent\_U\_det} and {\tt promptPeak}.
+	\item[promptPeakD]                \ldots  like {\tt goodEvent\_D\_det} and {\tt promptPeak}.
+	\item[promptPeakL]                \ldots  like {\tt goodEvent\_L\_det} and {\tt promptPeak}.
+	\item[promptPeakR]                \ldots  like {\tt goodEvent\_R\_det} and {\tt promptPeak}.
+	\item[doubleHitEvent\_gen]	\ldots The second (or subsequent) signal in a multiple hit event event regardless of pileup
+	\item[doubleHit]			\ldots A second (or subsequent) signal that is actually counted
+	\item[goodEvent\_F\_det\_AND\_doubleHit] \ldots A double event counted in the Forward counters. For pulsed analysis. Note that the first hit might not have been in the same bank. (Equivalent conditions for the other banks)
+	\item[singleHitEvent\_gen]		\ldots A single hit, only one positron signal from this muon was over threshold. (Pulsed analysis)
+	\item[stackedEvent\_gen]		\ldots The opposite of pileup, two or more small events (or noise) within a small time interval adding up to the threshold level. (Pulsed)
+     \end{description}
+     Additional conditions may be implemented on request.
+  \item{\bf draw \emph{histogramName} \emph{conditionID} } \\
+    Plot histogram (for a given condition)  at the end of the analysis. Note that all histograms
+    are saved into the output file irrespective whether they are plotted or not.
+   \item{\bf  counterPhaseShifts \emph{ID$_1$} \emph{$\phi_1$} \emph{ID$_2$} \emph{$\phi_2$} \ldots \emph{ID$_n$} \emph{$\phi_n$} }\\
+     Defines relative phase shifts of signal between different positron counters, which is used
+     for calculation variable {\tt det\_time20}. \emph{ID$_i$} is the ID number of the positron counter,
+     \emph{$\phi_i$} is its phase shift.  This gives the user a possibility to sum up backward and
+     forward histograms into one histogram.
+   \item{\bf  counterGrouping \emph{group} \emph{ID$_1$ ID$_2$ \ldots ID$_n$} } \\
+     This defines a group of detectors, where \emph{group} stands for ``B'' (backward), 
+     ``F'' (forward), ``U'' (up), ``D'' (down), ``L'' (left) and ``R'' (right) detectors.
+     This grouping is used in the definition of some conditions.
+   \item{\bf sampleID \emph{ID$_1$ ID$_2$ \ldots ID$_n$} } \\
+     Defines which volume (or volumes, if there are more) is the sample.  Typically, the
+     sample is just one volume, but sometimes there is a smaller volume inside of the sample,
+     to which a field is applied, so the small volume also has to be considered as the sample.
+     This information is needed for the condition ``muonDecayedInSample\_gen''.
+   \item{\bf  setSpecialAnticoincidenceTimeWindow  \emph{detectorID}  \emph{timeMin}  \emph{timeMax} \emph{unit}} \\
+     This command sets a special anti-coincidence time window for a detector \emph{detectorID}.
+     Normally, the anti-coincidence time window is defined by {\tt VCOINCIDENCEW}, and is the same for all anti-coincidence
+     detectors.  However, sometimes it might be interesting to set the anti-coincidence time window
+     differently for a specific detector (e.g.\ one might test an anti-coincidence of a veto detector with 
+     the M-counter for the whole pile-up time window of $\sim$\,10\,$\mu s$. 
+     Unlike in the case of {\tt VCOINCIDENCEW}, here the \emph{units} are not TDC bins, but
+     rather time in ``nanosecond'' or ``microsecond''.
+   \item{\bf  fit  \emph{histogramName}  \emph{function} \emph{option} \emph{min}  \emph{max} \emph{p$_1$} \ldots \emph{p$_n$}}  \\
+     Fits the histogram by a given function, where \emph{min}, \emph{max} define the range of the fit
+     on the $x$-axis of the histogram, \emph{option} is a string defining fit options (see Root manual for details), 
+     and \emph{p$_1$} \ldots \emph{p$_n$} are (typically, with some exceptions) 
+     the initial values of the function parameters.  The following functions are currently predefined:
+     \begin{description}
+       \item[pol0]    $=p_0$ \ldots  a constant (1 parameter) - typically used to fit background.
+       \item[simpleExpoPLUSconst] $=p_0 \exp(-x/2.19703)+p_1$
+       \item[rotFrameTime20] $= p_2 \cos(p_0 x+p_1)$
+       \item[funct1]  $=p_3 \exp((p_4 - x)/2.19703) \cdot (1+p_2 \cos(p_0 x+p_1))$
+       \item[funct2]  $=p_3 \exp((p_4 - x)/2.19703) \cdot (1+p_2 \cos(p_0 x+p_1)) + p_5$
+ %      \item[funct3]  the same as {\tt funct2}
+       \item[funct4]  $=p_3 \exp((- x)/2.19703) \cdot (1+p_2 \cos(p_0 x+p_1)) + p_4$
+       \item[TFieldCos] $=p_3 (1+p_2 \cos(p_0 x + p_1))$  \hspace{1cm} (this function is useful when the histogram is filled with {\tt ``correctexpdecay''} keyword.)
+       \item[TFieldCosPLUSbg] $=p_3 (1+p_2 \cos(p_0 x + p_1))  + p_4 \exp(x/2.19703)$
+            \hspace{1cm} (this function is useful when the histogram is filled with {\tt ``correctexpdecay''} keyword.)
+       \item[gaus] ... Gauss distribution
+     \end{description}
+
+
+\end{description}
+%========================================================================================================
+\section{A real-life example: GPD instrument}
+\label{sec:GPD}
+The simulation of the General Purpose Decay-Channel Spectrometer (GPD) 
+instrument~\cite{GPD} installed at PSI has been exemplified 
+in the \musrSim\ manual~\cite{musrSim}.
+Here we analyse the output of this simulation using \musrSimAna.
+The run number of this simulation is 201, therefore the steering
+file names are ``{\tt 201.mac}'' for \musrSim, and  ``{\tt 201.v1190}'' for
+\musrSimAna, respectively, and the output file name of \musrSim\ is saved as
+``{\tt data/musr\_201.root}''.
+The detector system is very simple with only six counters -- M-counter,
+two backward positron counters and three forward positron counters.
+The reader is strongly recommended to see the illustration of the GPD
+geometry in the \musrSim\ manual~\cite{musrSim}.
+
+8\,000\,000 of events were simulated
+(i.e.\ 8\,000\,000 of muons were generated 100\,cm in front of
+the GPD sample). 
+In only 949\,759 events (11.9\% out of the 8 million) there was a signal detected
+in one or more counters.  The remaining muons stopped somewhere (most
+often in collimator, as we will see later), decayed, and the decay positron
+(and any other particles created thereof) missed the counters.
+This is illustrated in more details in Fig.~\ref{det_n},
+%
+\begin{figure}[tbp]\centering
+\epsfig{file=pict/det_n_infititely_low_muon_rate.eps,width=0.8\linewidth,clip=}
+\caption{Number of hits in all counters per event, assuming infinitely low incoming muon
+rate. The same detector may be hit more than once (e.g.\ if both the muon and its decay 
+positron pass through the M-counter).}
+\label{det_n}
+\end{figure}
+%
+where number of detector hit per event, assuming infinitely low incoming muon
+rate, is shown.  This plot was created in Root by executing:\\[1em]
+{\tt 
+root [0] TFile* ff=new TFile("data/musr\_201.root") \\
+root [1] t1->Print() \\
+root [2] t1->Print("det\_n","det\_n>0") \\
+}\\[1em]
+%
+It has to be pointed out, that the ratio of muons passing through the opening
+in collimators to the number of all generated muons strongly depends on the
+beam properties -- beam profile, beam convergence, etc.  Typically, if we have
+too broad muon beam, we simulate
+many ``useless'' events.  However, the other extreme (simulating too narrow
+beam) can lead to underestimating the time-independent background.
+
+It took approximately 12 hours of the CPU (on PC bought in 2010, where 1 out 
+of 4 processor cores was running) to simulate these 8\,000\,000 events.
+Assuming the 30\,000\,$\mu/$s trigger rate, this corresponds to 26 seconds
+of real experimental running.
+
+\subsection{Where the muons stop and decay}
+\label{sect_muons}
+The positions, or more precisely the components of the GPD instrument, where the muons 
+stop and decay, are shown in Fig.~\ref{humanDecayHistograms_1}:
+%
+\begin{figure}[tbp]\centering
+\epsfig{file=pict/Plot201_1.eps,width=0.9\linewidth,%
+%%bbllx=83pt,bblly=330pt,bburx=538pt,bbury=513pt,clip=}
+clip=}
+\caption{This plot indicates, where the muons stopped and decayed. 
+The dashed histogram shows all generated muons. The full-line histograms show
+where stopped the muons, for which either the muon itself or its secondary
+particle ($e^+, \gamma$) triggered the M-counter:  black histogram stands for
+all such muons, corresponding to infinitely low incoming muon rate, while
+the red histogram stands for the incoming muon rate of 30\,000\,$\mu/$s.
+8\,000\,000 of events were simulated.}
+\label{humanDecayHistograms_1}
+\end{figure}
+%
+%Notes to Fig.~\ref{humanDecayHistograms_1}:
+\begin{itemize}
+  \item Figure~\ref{humanDecayHistograms_1} was generated by Root macro file ``Plot201.C''.
+  \item The labels on the $x$-axis are defined in the file {\tt 201.v1190} by the
+	command \\ 
+	{\tt humanDecayHistograms \ldots}
+  \item The dashed-line histogram in  Fig.~\ref{humanDecayHistograms_1} 
+        shows where the muons stopped and decayed if no preselection
+	criteria are applied on the muons, i.e.\ if all generated muons are considered.
+        This is histogram ``{\tt humanDecayHistograms\_1}''.
+  \item The full-line histograms show
+        where stopped the muons, for which either the muon itself or its secondary
+	particle ($e^+, \gamma$) triggered the M-counter:  black histogram stands for
+	all such muons, corresponding to infinitely low incoming muon rate, while
+	the red histogram represents the case for the 30\,000\,$\mu/$s incoming muon rate.
+	An energy deposit of at least 0.4\,MeV in the M-counter is required to fire the trigger.
+	The number of triggered events decreases with the incoming muon rate,
+	because some of the events are rejected due to the 10\,$\mu$s pileup gate.
+
+        The histogram name is in both cases ``{\tt humanDecayHistograms\_4}'',
+	where the black histogram was calculated using the setup file ``{\tt 201a.v1190}''
+	with the keyword {\tt INFINITELYLOWMUONRATE}, while the red histogram
+	was calculated using the setup file ``{\tt 201.v1190}''
+	with {\tt MUONRATEFACTOR=0.0965819}.
+  \item The $\pm 10\,\mu$s pile-up gate at the incoming muon rate of 30\,000$\,\mu/$s 
+        rejects approx.\ 45\% of the triggered events.  This number can be calulated
+	in Root as the ratio of the ``{\tt Integral}'' of the red and black histograms
+	in Fig.~\ref{humanDecayHistograms_1}:\\[1em]
+	{\tt \small
+	  root [0] TFile* file1 = new TFile("data/his\_201\_201a.v1190.root") \\
+	  root [1] humanDecayHistograms\_4->Integral() \\
+	  root [0] TFile* file2 = new TFile("data/his\_201\_201.v1190.root") \\
+	  root [1] humanDecayHistograms\_4->Integral() \\
+	}
+  \item The muon sample fraction (ratio of muons stopped in the sample over all muons that fired
+        the trigger) for the triggered events (full-line histograms) 
+	is 65\%, and it is practically the same
+	for both infinitely low and 30\,000\,$\mu/$s incoming rate.
+	This number can be obtained in Root by dividing the first column of histogram 
+	{\tt humanDecayHistograms\_4} by the sum of all entries in this histogram:\\[1em]
+	{\tt \small
+	  root [0] TFile* file = new TFile("data/his\_201\_201.v1190.root") \\
+	  root [1] (humanDecayHistograms\_4->GetBinContent(1))/(humanDecayHistograms\_4->Integral()) \\
+	}
+  \item The largest fraction of generated muons (dashed-line histogram) stopped in collimators.
+        Only a small fraction of them caused a hit in the M-counter (full-line histograms).
+  \item Despite the high initial muon momentum of $100 \pm 3\,$GeV/c, muons are 
+        significantly scattered in the last 50\,cm region of air.  This can be
+	clearly seen if the magnetic field is off and a point-like muon beam
+	is used (which can be done by modifying the {\tt 201.mac} file)
+	-- only 77\% of the muons stop in the sample cell or in the sample, while the
+	remaining 23\% of the mouns are scattered so much in the air, that they
+	end up in collimators or elsewhere (not shown here).
+  \item ``World'' in the histogram label means that the muon decayed in the beampipe vacuum 
+        or somewhere else in the air (on the fly). 
+  \item ``Escaped'' means that the muon left the simulated instrument (more precisely the 
+        ``world'' volume) prior its decay.
+\end{itemize}
+
+
+Figure~\ref{humanDecayHistograms_9} shows the ``pile-up events''.
+%
+\begin{figure}[htbp]\centering
+\epsfig{file=pict/Plot201_2_new.eps,width=0.9\linewidth,%
+%%bbllx=83pt,bblly=330pt,bburx=538pt,bbury=513pt,clip=}
+clip=}
+\caption{Pile-up events, i.e.\ the events in which one muon ($\mu_1$) fired the
+trigger, while the hit in a positron counter is due to a decay positron from 
+a different muon ($\mu_2$).  Pile-up events look like a good events, and contribute
+to the time-independent background.}
+\label{humanDecayHistograms_9}
+\end{figure}
+%
+These are events, in which one muon ($\mu_1$) is triggered by the m-counter, 
+while a positron from a different muon ($\mu_2$) was detected by 
+a positron counter\footnote{In fact, the trigger may also be triggered by
+the decay positron of $\mu_1$ and/or a positron counter may detect
+directly $\mu_2$, not its decay positron. Such cases are rare, but they 
+are implicitly included in the simulation.}.
+In addition to this requirement, the decay positron of $\mu_1$ must
+escape undetected (e.g.\ it must miss positron counters) and $\mu_2$ must not trigger the m-counter
+-- otherwise the event would be rejected.
+Pile-up events are the source of the time independent background.
+Usually $\mu_1$ is a good-looking muon that stops in the sample or in the sample cell
+(red histogram in Fig.~\ref{humanDecayHistograms_9}), while $\mu_2$ stops and decays at different places,
+mainly in the collimators (green histogram in Fig.~\ref{humanDecayHistograms_9}).
+
+A nice visualisation of where the background-contributing muons $\mu_2$ stop and decay
+is presented in Fig.~\ref{Pileup_muon_decay_map} (histogram ``{\tt hMuDecayMappileup\_9}'').
+%
+\begin{figure}[htbp]\centering
+\epsfig{file=pict/Pileup_muon_decay_map.eps,width=0.7\linewidth,%
+%%bbllx=83pt,bblly=330pt,bburx=538pt,bbury=513pt,clip=}
+clip=}
+\caption{Positions of where the $\mu_2$ stop and decay.}
+\label{Pileup_muon_decay_map}
+\end{figure}
+%
+In this two dimensional histogram, different components of the GPD instrument, 
+like the lead collimator, the copper collimator and the sample cell, can be recognised.
+The lead collimator is located at the $z$-position between -115\,mm and -85\,mm.
+Due to the high initial muon momentum of $\sim 100\,$MeV/c,
+the maximum of muons in Fig.~\ref{Pileup_muon_decay_map} stop quite deep in the
+lead collimator, at around $z=-103$\,mm.  This might be a little bit surprising to the
+\musr\ scientists who are used to work with the surface muons with momentum of 28\,MeV/c.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{The $\mu$SR signal}
+%
+Figure~\ref{hdet_time10_10}
+%
+\begin{figure}[htbp]\centering
+\epsfig{file=pict/hdet_time10_10.eps,width=0.495\linewidth,%
+bbllx=13pt,bblly=5pt,bburx=520pt,bbury=351pt,clip=}
+\epsfig{file=pict/hdet_time10_11.eps,width=0.495\linewidth,%
+bbllx=13pt,bblly=5pt,bburx=520pt,bbury=351pt,clip=}
+%%clip=}
+\caption{MuSR signal for the run 201 (TF$=300\,$gauss). The tree forward positron counters 
+are summed up in the left histogram, and the two backward counters in the right histogram.}
+\label{hdet_time10_10}
+\end{figure}
+%
+shows the $\mu$SR spectra for the same run, 
+i.e.\ for the transverse field of 300\,gauss, integrated over the three forward positron
+counters (left histogram called {\tt hdet\_time10\_10}) 
+and over the two backward positron counters (right histogram called {\tt hdet\_time10\_11}).
+Zero on the time axis corresponds to $t_0$, i.e.\ time of the m-counter hit.
+One can see a prompt peak at $t_0$, time independent background at negative times
+and an oscillating signal at positive times.
+The following function has been fitted to the oscillating part of the signal:
+%
+\begin{equation}
+f=p_3 \cdot e^{-t/2.19703} \cdot (1+p_2 \cdot \cos(t \cdot p_0+p_1))+p_4
+\label{eq_simple}
+\end{equation}
+The fits were restricted to the time interval of $(t_0+0.05 \mu\rm{s},t_0+9.95\mu\rm{s})$,
+and the parameter $p_0$ was fixed (e.g. not fitted).
+The fitted amplitude of asymmetry are $p_2 = 0.307 \pm 0.009$ and 
+$p_2 = 0.290 \pm 0.009$ for the forward and backward counters respectively.
+
+Parts of the spectra from Fig.~\ref{hdet_time10_10} are shown 
+in detail in Fig.~\ref{hdet_time10_10_detail}.
+%
+\begin{figure}[htbp]\centering
+\epsfig{file=pict/hdet_time10_10_detail.eps,width=0.495\linewidth,%
+bbllx=13pt,bblly=5pt,bburx=520pt,bbury=351pt,clip=}
+\epsfig{file=pict/hdet_time10_11_pileup.eps,width=0.495\linewidth,%
+bbllx=13pt,bblly=5pt,bburx=520pt,bbury=351pt,clip=}
+%%clip=}
+\caption{MuSR signal for the run 201 (TF$=300\,$gauss) -- details of
+Fig.~\ref{hdet_time10_10}. The left plot shows the signal in the forward counters around $t_0$,
+the right plot shows the (time-independent background) signal at negative times in the
+backward counters.}
+\label{hdet_time10_10_detail}
+\end{figure}
+%
+The left plot in Fig.~\ref{hdet_time10_10_detail} shows the signal 
+in the forward counters around $t_0$, the right plot shows the 
+(time-independent background) signal at negative times in the backward counters.
+
+An important characteristic of a \musr\ instrument is the time-independent 
+background.  It is usually expressed as
+%
+\begin{equation}
+{\rm Bgr} = p_{-} / p_3 ~~~,
+\label{eq_background}
+\end{equation}
+%
+where $p_{-}$ is the fit to the time-independent background, i.e.\ signal at negative times, 
+and $p_3$ is the parameter from eq.(\ref{eq_simple}), which specifies what the
+size of the signal would be at $t_0$ in the absence of oscillations.
+In the case of backward counters ${\rm Bgr}_{\rm backw} = 14.47/262 = 5.5\,\%$,
+in the case of forward counters ${\rm Bgr}_{\rm forw} = 6.88/267.9 = 2.6\,\%$.
+
+Note that the histogram on right hand side of Fig.~\ref{hdet_time10_10_detail}
+is labelled ``{\tt hdet\_time10\_Bgr\_11}'', not ``{\tt hdet\_time10\_11}''.
+In fact, the two histograms are identical, as one can see in the setup file
+{\tt 201.v1190}.  The only difference is in the fitting -- the same data stored in
+both histograms are fitted by different functions in different time ranges.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{The $\mu$SR signal from individual counters}
+%
+Figure~\ref{F11} shows the observed signal in the
+forward counter\ No.~11 (FW11).
+%
+\begin{figure}[htbp]\centering
+\epsfig{file=pict/F11_rebinned.eps,width=0.495\linewidth,%
+bbllx=13pt,bblly=5pt,bburx=520pt,bbury=351pt,clip=}
+\epsfig{file=pict/F11_B11_prompt_peak_thicker.eps,width=0.495\linewidth,%
+bbllx=13pt,bblly=5pt,bburx=520pt,bbury=351pt,clip=}
+\caption{\musr\ signal in the forward positron counter\ No.~11 (run 201, TF$=300\,$gauss).
+The left plot shows the (rebinned) signal in the counter,
+the right plot shows the detail of the \emph{prompt peak}, i.e.\ the region 
+around $t_0$ in the same counter (black line), 
+compared with the prompt peak in the backward positron counter\ No.~1 (magenta line).}
+\label{F11}
+\end{figure}
+%
+Originally, the histogram F11 was defined with the bin width of 100\,ps.
+The number of bins was 50995, covering the time interval of approx.\ (-0.2\,$\mu$s, 4.9\,$\mu$s).
+In the left hand side plot, however, the histogram was rebinned 
+(200 bins were summed up into 1 bin).
+The right hand side plot shows the detail of the \emph{prompt peak}, i.e.\ the region 
+around $t_0$, of one forward and one backward positron counters, prior to the rebinning.  
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Conclusion of the GPD analysis example}
+%
+The purpose of the example analysis of the GPD simulation was to illustrate
+the potential of \musrSim\ and \musrSimAna\ programs to investigate features
+like time-independent background, sample muon fraction, prompt peak, \ldots
+This information can be used in design and optimisation of \musr\ instruments.
+%========================================================================================================
+\section{GPS instrument}
+%
+It is foreseen that GPS instrument could be arranged in two geometries
+after the upgrade (depending from which side the calorimeter would be
+inserted). 
+\begin{itemize}
+  \item {\tt 50130hb.v1190} -- Calorimeter inserted from one side.
+  \item {\tt 50130hl.v1190} -- Calorimeter inserted from the other side.
+  \item {\tt 50130hb1.v1190 -- 50130hb6.v1190} -- All positron counters 
+    analysed individually.
+\end{itemize}
+See the document about the GPS simulations saved in the directory: \\
+/afs/psi.ch/project/lmu/Facility/musr\_simulations/documentation/GPS/ \\
+for more details.
+%========================================================================================================
+\section{Other Examples}
+Many different ``*.v1190'' files are stored in the file:
+``run\_musrSimAna\_many\_files.tar.gz''.  They could serve as additional examples.
+Note that the syntax of the ``fit'' command was changed
+at some point, and therefore the ``fit'' command might cause problems
+(the {\tt ``option''} has to be added in the old ``*.v1190'' files).
+%========================================================================================================
+\section{Pulsed data collection}
+\label{sect_pulsed}
+The differences for a pulsed muon beam and instrument are:
+\begin{itemize}
+\item No ``M'' counter needs to be defined (but if present in \musrSim`s .mac file it must also be defined in the .v1190 file and will be ignored)
+\item The  \musrSim \ command ``/gun/starttimesigma \emph{sigma}'' defines the pulse width of the generated muon beam (in ns). A positive value is a Gaussian distribution, negative gives a rectangular pulse extending to $\pm$sigma.
+% \item When varying the magnetic field or any physical arrangement of the instrument, \musrSim \ command ``/musr/command storeOnlyEventsWithHits false'' must be given so that the number of muons per frame, indicated count rate, and pileup, scale correctly with field.
+\item It is advisable to set RESOLUTION to a very small value (1\,ps) so that pileup events do not coincide exactly. 
+\item \musrSimAna \  outputs the indicated count rate (in Mevents per hour) and this should be adjusted to match the experimental rate using the parameter MUONRATEFACTOR.
+\item For ISIS operation with 4 pulses to TS1 (and muons) and one pulse to TS2, set FRAMEINTERVAL to the mean value of 25ms = 1/(40Hz).
+\end{itemize}
+\subsection{Dead time and pileup}
+The model used is that each event ``charges up'' the discriminator by an amount equal to the energy deposited, and it then decays exponentially back towards zero with a time constant set by DEADTIME=\emph{value}. If the event causes the discriminator to cross the specified threshold in the positive direction, it will be recorded. At present there is no hysteresis and no minimum time interval between hits recorded in the TDC.
+
+There are two likely artefacts. The first is the expected pileup or dead time distortion: a second event (itself over threshold) comes before the discriminator has recovered from the first, and will be missed. The second, referred to here as ``stacked'' events, are when a first small event charges the discriminator to half way and a second one soon after it can then reach the threshold and trigger a count. This is more common if the threshold is set too high and there are many normal positron hits not reaching the threshold on their own, and results in an opposite distortion to dead time, though with the same time dependence (worse for early times).
+
+%========================================================================================================
+\begin{thebibliography}{0}
+
+\bibitem{acquisitionProkscha}  T.~Prokscha {\it et al.} ``A novel VME based \musr\ data acquisition system at PSI'',
+Physica {\bf B~404}, (2009) 1007-1009.
+
+\bibitem{TDCsetup} ``TDC Manual -- Setting up the required logic'', 
+http://lmu.web.psi.ch/facilities/electronics/TDC/set\_logic.html
+
+\bibitem{GPD}
+http://lmu.web.psi.ch/facilities/gpd/gpd.html
+
+\bibitem{musrSim}
+K.Sedlak {\it et al.}, ``Manual of musrSim''.
+
+
+\end{thebibliography}
+
+\end{document}
