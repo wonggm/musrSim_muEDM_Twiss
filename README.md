@@ -1,5 +1,11 @@
 # musrSim_muEDM_Twiss
-musrSim modified with Geant4 wrapper (https://github.com/kyrsjo/Miniscatter), enabling beam optics parameter inputs for simulation
+musrSim modified with Geant4 wrapper (https://github.com/kyrsjo/Miniscatter), enabling beam optics parameter inputs for simulation。\
+\
+Errors when building musrSim, particularly those of "namespace", can be resolve by checking and setting CMAKE version：
+```
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+```
 
 # Update Spring 2023
 ### Files changed: 
