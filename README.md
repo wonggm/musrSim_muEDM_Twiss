@@ -9,10 +9,10 @@ in `src/`,\
 and in respective counterpart of header files \
 \
 **`musrPrimaryGeneratorAction.cc`**:
-- **line 144 - 167**: reads Twiss parameters input from `.mac` file\
-- **line 169 - 249**: set-up covariance matrix from the given Twiss parameters\
-- **line 537 - 566**: a condition calculating the position and momentum components (x, px, y, py), using the covariance matrix elements calculated\
-- For Twiss parameters input with <em>emittance, &epsilon;</em> in units of &pi;, **line 624** and **line 630** can be uncommented (while commenting-out **line 625** and **line 631** respectively)\
+- **line 144 - 167**: reads Twiss parameters input from `.mac` file
+- **line 169 - 249**: set-up covariance matrix from the given Twiss parameters
+- **line 537 - 566**: a condition calculating the position and momentum components (x, px, y, py), using the covariance matrix elements calculated
+- For Twiss parameters input with <em>emittance, &epsilon;</em> in units of &pi;, **line 624** and **line 630** can be uncommented (while commenting-out **line 625** and **line 631** respectively)
 \
 `musrPrimaryGeneratorMessenger.cc`:
 - **line 43- 59**: parsing inputs of Twiss parameters to corresponding variables
