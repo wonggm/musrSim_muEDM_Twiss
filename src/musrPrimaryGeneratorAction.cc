@@ -621,9 +621,8 @@ void musrPrimaryGeneratorAction::GeneratePrimaries(G4Event *anEvent)
     }
   }
 
-  particleGun->SetParticlePosition(G4ThreeVector(x/(2*CLHEP::pi)*CLHEP::pi, y/(2*CLHEP::pi)*CLHEP::pi, z));
   // particleGun->SetParticlePosition(G4ThreeVector(x, y, z));
-  // particleGun->SetParticlePosition(G4ThreeVector(x/2, y/2, z));
+  particleGun->SetParticlePosition(G4ThreeVector(x/(2*CLHEP::pi)*CLHEP::pi, y/(2*CLHEP::pi)*CLHEP::pi, z));  
   G4double particle_mass = particleGun->GetParticleDefinition()->GetPDGMass();
   G4double particleEnergy = std::sqrt(p * p + particle_mass * particle_mass) - particle_mass;
   particleGun->SetParticleEnergy(particleEnergy);
