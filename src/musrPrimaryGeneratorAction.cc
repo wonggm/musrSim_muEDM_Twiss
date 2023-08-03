@@ -89,6 +89,15 @@ musrPrimaryGeneratorAction::musrPrimaryGeneratorAction(
       beam_offset(beam_offset_in * CLHEP::mm), rngSeed(rngSeed_in), beam_angle(beam_angle_in * CLHEP::deg), Rcut(Rcut_in * CLHEP::mm), beam_zpos(beam_zpos_in)
 // , doBacktrack(doBacktrack_in)
 {
+  G4cout << "!!!!!!!!!!!! <debugging> This is modified GM's PGA in branch: testbench !!!!!!!!!!!! " << G4endl;
+  G4cout << "note: when using twiss parameters " << G4endl;
+  G4cout << "    1.) will ignore all angle tilt and pitch" << G4endl;
+  G4cout << "    2.) also the boundary limits (use with care)" << G4endl;
+  G4cout << "    3.) also the tilt angle, momentum smearing" << G4endl;
+  G4cout << "    4.) you can only shoot beam in +z direction if you" << G4endl;
+  G4cout << "    5.) but you can change the vertex position (but not its smearing)" << G4endl;
+  G4cout << "    6.) the normalized emmitance is not relavant now, twiss setting is independent of momentum setting" << G4endl;
+  G4cout << "!!!!!!!!!!!! <debugging> from PGA  !!!!!!!!!!!! " << G4endl;
   // create a messenger for this class
   gunMessenger = new musrPrimaryGeneratorMessenger(this);
 
@@ -172,24 +181,25 @@ void musrPrimaryGeneratorAction::setupCovariance()
   // UseTwiss = true;
   G4cout << G4endl;
   G4cout << "Initializing covariance matrices..." << G4endl;
-
+  // sorry we are using geometrical emmitance so we dont needd this for the time being
   // Compute the geometrical emittance
-  G4double particle_mass = particleGun->GetParticleDefinition()->GetPDGMass();
-  G4cout << "<debugging> PGA particle mass: " << particle_mass << G4endl;
+  // G4double particle_mass = particleGun->GetParticleDefinition()->GetPDGMass();
+  // G4cout << "<debugging> PGA particle mass: " << particle_mass << G4endl;
 
   // G4cout << "beam_energy       = " << beam_energy << " [MeV]" << G4endl;
   // G4double beam_energy=109; // test first
   // G4double beam_total_energy = beam_energy*CLHEP::MeV + particle_mass;
 
-  G4double beam_total_energy = std::sqrt(p0 * p0 + particle_mass * particle_mass);
-  G4cout << "beam_total_energy = " << beam_total_energy / CLHEP::MeV << G4endl;
-  G4double gamma_rel = beam_total_energy / particle_mass;
-  G4cout << "gamma_rel         = " << gamma_rel << G4endl;
-  G4double beta_rel = sqrt(gamma_rel * gamma_rel - 1.0) / gamma_rel;
-  G4cout << "beta_rel          = " << beta_rel << G4endl;
+  
+  // G4double beam_total_energy = std::sqrt(p0 * p0 + particle_mass * particle_mass);
+  // G4cout << "beam_total_energy = " << beam_total_energy / CLHEP::MeV << G4endl;
+  // G4double gamma_rel = beam_total_energy / particle_mass;
+  // G4cout << "gamma_rel         = " << gamma_rel << G4endl;
+  // G4double beta_rel = sqrt(gamma_rel * gamma_rel - 1.0) / gamma_rel;
+  // G4cout << "beta_rel          = " << beta_rel << G4endl;
 
-  epsG_x = epsN_x / (beta_rel * gamma_rel)/CLHEP::pi;
-  epsG_y = epsN_y / (beta_rel * gamma_rel)/CLHEP::pi;
+  // epsG_x = epsN_x / (beta_rel * gamma_rel);
+  // epsG_y = epsN_y / (beta_rel * gamma_rel);
 
   G4cout << "Got Twiss parameters:" << G4endl;
   G4cout << "epsN_x  = " << epsN_x << "[mm mrad]" << G4endl;
@@ -209,7 +219,7 @@ void musrPrimaryGeneratorAction::setupCovariance()
   covarX[1][1] = (1 + alpha_x * alpha_x) / beta_x;
   // covarX.Print(); // Raw matrix
 
-  covarX *= (epsG_x * 1e-6); //  convert mm.mrad to m.rad = m // epsG_x; // 
+  covarX *= (epsN_x); // miniscater original is : (epsN_x * 1e-6); // convert mm.mrad to m.rad = m
 
   G4cout << "Covariance matrix (X) [mm^2, mm * mrad, mrad^2]:" << G4endl;
   covarX.Print();
@@ -221,7 +231,7 @@ void musrPrimaryGeneratorAction::setupCovariance()
   covarY[1][1] = (1 + alpha_y * alpha_y) / beta_y;
   // covarY.Print(); // Raw matrix
 
-  covarY *= (epsG_y * 1e-6); //epsG_y; // 
+  covarY *= (epsN_y); // note: miniscater input eN, but we seems to work in eG. so ...
 
   G4cout << "Covariance matrix (Y) [mm^2, mm * mrad, mrad^2]:" << G4endl;
   covarY.Print();
@@ -272,10 +282,8 @@ void musrPrimaryGeneratorAction::GeneratePrimaries(G4Event *anEvent)
 
   G4double x, y, z;
   G4double p;
-  G4double xp,yp; // for twiss
   G4double xangle, yangle;
 
-  // use of turtle file will override all other settings ?
   if (takeMuonsFromTurtleFile)
   {
     char line[501];
@@ -354,79 +362,6 @@ void musrPrimaryGeneratorAction::GeneratePrimaries(G4Event *anEvent)
     //      G4cout<<"x,y,z=("<<x/mm<<","<<y/mm<<","<<z/mm<<"),  angles="<<xangle/mrad<<","<<yangle/mrad<<"  p="<<p/MeV<<G4endl;
   }
 
-// use twiss: under construction
-  else if (UseTwiss)
-  {
-    if (takeMuonsFromTurtleFile){
-      G4cout<< "Twiss parameters are given. will override the turtle file input." << G4endl;
-      fclose(fTurtleFile);
-    };
-  
-    // setupCovariance();
-    RNG = new TRandom1((UInt_t)rngSeed);
-    G4int checkNrOfCounts = 0;
-    numberOfGeneratedEvents++;
-    do
-    {
-      G4double xn = RNG->Gaus(0, 1);
-      G4double xpn = RNG->Gaus(0, 1);
-      // x = ((xn * covarX_L[0][0] + xpn * covarX_L[0][1]) * CLHEP::meter + beam_offset)/100*5*CLHEP::pi;
-      // px = ((xn * covarX_L[1][0] + xpn * covarX_L[1][1]) * CLHEP::rad)*10*5*CLHEP::pi;
-      x = (xn * covarX_L[0][0] + xpn * covarX_L[0][1]) *1000* CLHEP::mm; //beam_offset;
-      xp = (xn * covarX_L[1][0] + xpn * covarX_L[1][1]) *1000* CLHEP::mrad;
-
-      G4double yn = RNG->Gaus(0, 1);
-      G4double ypn = RNG->Gaus(0, 1);
-      y = (yn * covarY_L[0][0] + ypn * covarY_L[0][1]) *1000* CLHEP::mm;
-      yp = (yn * covarY_L[1][0] + ypn * covarY_L[1][1]) *1000* CLHEP::mrad;
-
-      // add some offset, if requested: (no position smearing ! it will spoil the correlation)
-      x = x + x0;
-      y = y + y0;
-
-      if (checkNrOfCounts > 1000)
-      {
-        G4cout << "musrPrimaryGeneratorAction::GeneratePrimaries:  Too strict requirements on the position!" << G4endl;
-      }
-      
-    } while (
-        ((x * x + y * y) > (rMaxAllowed * rMaxAllowed)) || (z > zMaxAllowed) || (z < zMinAllowed) ||
-        (((x - x0) * (x - x0) + (y - y0) * (y - y0)) > (relativeRMaxAllowed * relativeRMaxAllowed)) ||
-        (fabs(x - xMaxSource0) > xMaxSource) || (fabs(y - yMaxSource0) > yMaxSource) || (fabs(z - zMaxSource0) > zMaxSource));
-
-
-    // add some beam tilt, if requested:(again, smearing !)
-    xp = xp + xangle0;
-    yp = yp + yangle0;
-    // add some beam pitch, if requested:
-    if (pitch != 0){
-      xp += -pitch * (x - x0);
-      yp += -pitch * (y - y0);
-    };
-
-    // Now generate the momentum
-    checkNrOfCounts = 0;
-    do
-    {
-      if (pSigma > 0)
-      {
-        p = G4RandGauss::shoot(p0, pSigma);
-      }
-      else
-      {
-        p = p0;
-      }
-      checkNrOfCounts++;
-      if (checkNrOfCounts > 1000)
-      {
-        G4cout << "musrPrimaryGeneratorAction::GeneratePrimaries:  Too strict requirements on the momentum!" << G4endl;
-      }
-    } while ((p > pMaxAllowed) || (p < pMinAllowed));
-
-    z = z0; //beam_zpos;
-  }
-
-  // case other than using turtle file
   else
   { // Generate the starting position of the muon by random
     //  rMaxAllowed             ... maximal radius, within which the muon can be generated
@@ -546,19 +481,12 @@ void musrPrimaryGeneratorAction::GeneratePrimaries(G4Event *anEvent)
   //------- generate cos(Theta) distribution if zangleSigma < 0 and calculate final momentum
   G4double sinXangle, sinYangle, phi;
   G4double px, py, pz;
-  if (zangleSigma < 0 && !UseTwiss)
+  if (zangleSigma < 0)
   {
     sinXangle = sqrt(G4UniformRand());
     phi = 2 * CLHEP::pi * G4UniformRand();
     px = p * sinXangle * cos(phi);
     py = p * sinXangle * sin(phi);
-    pz = std::sqrt(p * p - px * px - py * py);
-  }
-  else if (UseTwiss){
-    // px = xp; // problem
-    // py = yp; // problem
-    px = p*sin(xp)*cos(yp);
-    py = p*sin(yp)*cos(xp);
     pz = std::sqrt(p * p - px * px - py * py);
   }
   else
@@ -617,42 +545,41 @@ void musrPrimaryGeneratorAction::GeneratePrimaries(G4Event *anEvent)
     z = z0 + RVec->z();
   }
 
-// GM's
-  // if (UseTwiss)
-  // {
-  //   setupCovariance();
-  //   RNG = new TRandom1((UInt_t)rngSeed);
-  //   // int loopCounter = 0;
-  //   while (true)
-  //   {
-  //     G4double xn = RNG->Gaus(0, 1);
-  //     G4double xpn = RNG->Gaus(0, 1);
-  //     // x = ((xn * covarX_L[0][0] + xpn * covarX_L[0][1]) * CLHEP::meter + beam_offset)/100*5*CLHEP::pi;
-  //     // px = ((xn * covarX_L[1][0] + xpn * covarX_L[1][1]) * CLHEP::rad)*10*5*CLHEP::pi;
-  //     // x = (xn * covarX_L[0][0] + xpn * covarX_L[0][1]) * CLHEP::meter + beam_offset;
-  //     // px = (xn * covarX_L[1][0] + xpn * covarX_L[1][1]) * CLHEP::rad;
-  //     x = (xn * covarX_L[0][0] + xpn * covarX_L[0][1]) * CLHEP::mm + x0;
-  //     px = (xn * covarX_L[1][0] + xpn * covarX_L[1][1]) * CLHEP::mrad;
+  if (UseTwiss)
+  {
+    // setupCovariance();
+    RNG = new TRandom1((UInt_t)rngSeed);
+    // int loopCounter = 0;
+    while (true)
+    {
+      G4double xn = RNG->Gaus(0, 1);
+      G4double xpn = RNG->Gaus(0, 1);
+      x = (xn * covarX_L[0][0] + xpn * covarX_L[0][1]) * CLHEP::mm;// + beam_offset;
+      px = (xn * covarX_L[1][0] + xpn * covarX_L[1][1]) * CLHEP::mrad;
 
-  //     G4double yn = RNG->Gaus(0, 1);
-  //     G4double ypn = RNG->Gaus(0, 1);
-  //     // y = (yn * covarY_L[0][0] + ypn * covarY_L[0][1]) * CLHEP::meter;
-  //     // py = (yn * covarY_L[1][0] + ypn * covarY_L[1][1]) * CLHEP::rad;
-  //     y = (yn * covarY_L[0][0] + ypn * covarY_L[0][1]) * CLHEP::mm + y0;
-  //     py = (yn * covarY_L[1][0] + ypn * covarY_L[1][1]) * CLHEP::mrad;
+      G4double yn = RNG->Gaus(0, 1);
+      G4double ypn = RNG->Gaus(0, 1);
+      y = (yn * covarY_L[0][0] + ypn * covarY_L[0][1]) * CLHEP::mm;
+      py = (yn * covarY_L[1][0] + ypn * covarY_L[1][1]) * CLHEP::mrad;
 
-  //     if (Rcut == 0.0)
-  //       break;
-  //     else
-  //     {
-  //       G4double init_r = sqrt(x * x + y * y) / CLHEP::mm;
-  //       if (init_r <= Rcut)
-  //         break;
-  //     }
-  //     z = z0;
-  //   }
-  // } 
-  // GM's
+      pz = 1; //*CLHEP::mrad; // why it has to be ONE ?!
+
+      x = x + x0;
+      y = y + y0;
+      z = z0; // if you put below in this code, they will never get run
+
+      if (Rcut == 0.0) // this part of code has no effect. so you dont have hang-protection
+        break;
+      else
+      {
+        G4double init_r = sqrt(x * x + y * y) / CLHEP::mm;
+        if (init_r <= Rcut)
+          break;
+      }
+
+      z = beam_zpos;
+    } // GM
+  }
   // else if (Rcut != 0.0) {
   //     G4double r = RNG->Uniform();
   //     G4double t = RNG->Uniform(2*CLHEP::pi);
@@ -710,15 +637,12 @@ void musrPrimaryGeneratorAction::GeneratePrimaries(G4Event *anEvent)
     }
   }
 
-  particleGun->SetParticlePosition(G4ThreeVector(x, y, z));
-  // particleGun->SetParticlePosition(G4ThreeVector(x/(2*CLHEP::pi)*CLHEP::pi, y/(2*CLHEP::pi)*CLHEP::pi, z));   // GM
+  particleGun->SetParticlePosition(G4ThreeVector(x, y, z)); 
   G4double particle_mass = particleGun->GetParticleDefinition()->GetPDGMass();
   G4double particleEnergy = std::sqrt(p * p + particle_mass * particle_mass) - particle_mass;
   particleGun->SetParticleEnergy(particleEnergy);
   particleGun->SetParticleTime(ParticleTime); // P.B. 13 May 2009
   particleGun->SetParticleMomentumDirection(G4ThreeVector(px, py, pz));
-  // particleGun->SetParticleMomentumDirection(G4ThreeVector(px*20*CLHEP::pi*CLHEP::pi, py*20*CLHEP::pi*CLHEP::pi, 40*CLHEP::pi*CLHEP::pi)); // GM
-  // particleGun->SetParticleMomentumDirection(G4ThreeVector(px, py, 1));
   particleGun->SetParticlePolarization(G4ThreeVector(xpolaris, ypolaris, zpolaris));
   particleGun->GeneratePrimaryVertex(anEvent);
 
@@ -781,7 +705,6 @@ void musrPrimaryGeneratorAction::GeneratePrimaries(G4Event *anEvent)
     G4cout << "      ------------------------------------" << G4endl;
   }
 }
-
 
 //===============================================================================
 void musrPrimaryGeneratorAction::SetInitialMuonPolariz(G4ThreeVector vIniPol)
