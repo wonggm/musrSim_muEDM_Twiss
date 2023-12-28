@@ -1,7 +1,0 @@
-/home/m/musrSim_Twiss/build/CMakeFiles/musrSim.dir
-/home/m/musrSim_Twiss/build/CMakeFiles/edit_cache.dir
-/home/m/musrSim_Twiss/build/CMakeFiles/rebuild_cache.dir
-/home/m/musrSim_Twiss/build/CMakeFiles/list_install_components.dir
-/home/m/musrSim_Twiss/build/CMakeFiles/install.dir
-/home/m/musrSim_Twiss/build/CMakeFiles/install/local.dir
-/home/m/musrSim_Twiss/build/CMakeFiles/install/strip.dir
